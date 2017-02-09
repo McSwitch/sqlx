@@ -12,7 +12,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/jmoiron/sqlx/reflectx"
+	"github.com/McSwitch/sqlx/reflectx"
 )
 
 // Although the NameMapper is convenient, in practice it should not
@@ -595,11 +595,12 @@ func (r *Rows) StructScan(dest interface{}) error {
 
 	v = reflect.Indirect(v)
 
+    columns, err := r.Columns()
+    if err != nil {
+        return err
+    }
+
 	if !r.started {
-		columns, err := r.Columns()
-		if err != nil {
-			return err
-		}
 		m := r.Mapper
 
 		r.fields = m.TraversalsByName(v.Type(), columns)
@@ -611,7 +612,7 @@ func (r *Rows) StructScan(dest interface{}) error {
 		r.started = true
 	}
 
-	err := fieldsByTraversal(v, r.fields, r.values, true)
+	err = fieldsByTraversal(v, r.fields, r.values, true, columns)
 	if err != nil {
 		return err
 	}
@@ -767,7 +768,7 @@ func (r *Row) scanAny(dest interface{}, structOnly bool) error {
 	}
 	values := make([]interface{}, len(columns))
 
-	err = fieldsByTraversal(v, fields, values, true)
+	err = fieldsByTraversal(v, fields, values, true, columns)
 	if err != nil {
 		return err
 	}
@@ -938,7 +939,7 @@ func scanAll(rows rowsi, dest interface{}, structOnly bool) error {
 			vp = reflect.New(base)
 			v = reflect.Indirect(vp)
 
-			err = fieldsByTraversal(v, fields, values, true)
+			err = fieldsByTraversal(v, fields, values, true, columns)
 			if err != nil {
 				return err
 			}
@@ -1004,7 +1005,7 @@ func baseType(t reflect.Type, expected reflect.Kind) (reflect.Type, error) {
 // when iterating over many rows.  Empty traversals will get an interface pointer.
 // Because of the necessity of requesting ptrs or values, it's considered a bit too
 // specialized for inclusion in reflectx itself.
-func fieldsByTraversal(v reflect.Value, traversals [][]int, values []interface{}, ptrs bool) error {
+func fieldsByTraversal(v reflect.Value, traversals [][]int, values []interface{}, ptrs bool, columns []string) error {
 	v = reflect.Indirect(v)
 	if v.Kind() != reflect.Struct {
 		return errors.New("argument not a struct")
@@ -1016,6 +1017,21 @@ func fieldsByTraversal(v reflect.Value, traversals [][]int, values []interface{}
 			continue
 		}
 		f := reflectx.FieldByIndexes(v, traversal)
+
+        // added map scanner support
+        if f.Kind() == reflect.Map {
+            if instance, ok := f.Interface().(reflectx.MapScanner); ok {
+                segments := strings.Split(columns[i], ".")
+                key := segments[len(segments)-1]
+                values[i] = &reflectx.MapScannerCallback{
+                    Callback: func(src interface{}) error {
+                        return instance.ScanMapValue(key, src)
+                    },
+                }
+                continue
+            }
+        }
+
 		if ptrs {
 			values[i] = f.Addr().Interface()
 		} else {

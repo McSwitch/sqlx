@@ -13,6 +13,24 @@ import (
 	"sync"
 )
 
+// MapScannerCallback is passed as a value type for any wildcard columns, the
+// callback is used to link the column key/value pair for map processing
+type MapScannerCallback struct {
+    Callback func(src interface{}) error
+}
+
+// Scan implements the sql.Scanner interface, send the src to the callback function
+// for processing
+func (msc *MapScannerCallback) Scan(src interface{}) error {
+    return msc.Callback(src)
+}
+
+// MapScanner is used to process a column key/value pair for wildcard columns
+type MapScanner interface{
+    ScanMapValue(key string, src interface{}) error
+}
+
+
 // A FieldInfo is metadata for a struct field.
 type FieldInfo struct {
 	Index    []int
@@ -174,7 +192,15 @@ func (m *Mapper) TraversalsByName(t reflect.Type, names []string) [][]int {
 	for _, name := range names {
 		fi, ok := tm.Names[name]
 		if !ok {
-			r = append(r, []int{})
+            // added support for wildcard column groupings
+            wildcard := strings.Split(name, ".")
+            wildcard[len(wildcard)-1] = "*"
+            fi, ok = tm.Names[strings.Join(wildcard, ".")]
+            if !ok {
+                r = append(r, []int{})
+            } else {
+                r = append(r, fi.Index)
+            }
 		} else {
 			r = append(r, fi.Index)
 		}
